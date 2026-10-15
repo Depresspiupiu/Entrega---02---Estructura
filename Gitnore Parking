@@ -1,0 +1,8 @@
+# Ejecutables y archivos generados
+*.exe
+*.obj
+*.o
+*.pdb
+*.ilk
+__pycache__/
+*.pyc
