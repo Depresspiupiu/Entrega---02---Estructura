@@ -1,0 +1,117 @@
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iostream>
+#include <string>
+#include <limits>
+
+#pragma comment(lib, "Ws2_32.lib")
+
+constexpr int PORT = 8080;
+
+std::string enviarSolicitud(const std::string& ip, const std::string& mensaje) {
+    WSADATA wsaData{};
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        return "ERROR|No se pudo inicializar Winsock";
+    }
+
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) {
+        WSACleanup();
+        return "ERROR|No se pudo crear el socket";
+    }
+
+    sockaddr_in direccion{};
+    direccion.sin_family = AF_INET;
+    direccion.sin_port = htons(PORT);
+
+    if (inet_pton(AF_INET, ip.c_str(), &direccion.sin_addr) != 1) {
+        closesocket(sock);
+        WSACleanup();
+        return "ERROR|Dirección IP inválida";
+    }
+
+    if (connect(sock, reinterpret_cast<sockaddr*>(&direccion), sizeof(direccion)) == SOCKET_ERROR) {
+        int error = WSAGetLastError();
+        closesocket(sock);
+        WSACleanup();
+        return "ERROR|No se pudo conectar al servidor. Código: " + std::to_string(error);
+    }
+
+    std::string solicitud = mensaje + "\n";
+    int enviados = 0;
+    while (enviados < static_cast<int>(solicitud.size())) {
+        int n = send(sock, solicitud.c_str() + enviados,
+                     static_cast<int>(solicitud.size()) - enviados, 0);
+        if (n == SOCKET_ERROR || n == 0) {
+            closesocket(sock);
+            WSACleanup();
+            return "ERROR|Falló el envío de la solicitud";
+        }
+        enviados += n;
+    }
+
+    std::string respuesta;
+    char buffer[1024];
+    while (respuesta.find('\n') == std::string::npos) {
+        int n = recv(sock, buffer, sizeof(buffer), 0);
+        if (n <= 0) break;
+        respuesta.append(buffer, n);
+        if (respuesta.size() > 4096) break;
+    }
+
+    closesocket(sock);
+    WSACleanup();
+
+    if (!respuesta.empty() && respuesta.back() == '\n') respuesta.pop_back();
+    return respuesta.empty() ? "ERROR|El servidor no respondió" : respuesta;
+}
+
+int main(int argc, char* argv[]) {
+    std::string ip;
+    if (argc >= 2) {
+        ip = argv[1];
+    } else {
+        std::cout << "IP local del computador servidor (ej. 192.168.1.25): ";
+        std::getline(std::cin, ip);
+    }
+
+    std::cout << "\n=== CLIENTE DEL PARQUEADERO ===\n";
+    std::cout << "Servidor: " << ip << ":" << PORT << "\n";
+
+    while (true) {
+        std::cout << "\n1. Registrar entrada\n"
+                  << "2. Registrar salida\n"
+                  << "3. Consultar cantidad de vehículos\n"
+                  << "4. Mostrar placas dentro\n"
+                  << "0. Salir\n"
+                  << "Opción: ";
+
+        int opcion;
+        if (!(std::cin >> opcion)) break;
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+        if (opcion == 0) {
+            std::cout << "Cliente finalizado.\n";
+            break;
+        }
+
+        std::string solicitud;
+        if (opcion == 1 || opcion == 2) {
+            std::string placa;
+            std::cout << "Ingresa la placa (ej. ABC-123): ";
+            std::getline(std::cin, placa);
+            solicitud = (opcion == 1 ? "ENTRADA|" : "SALIDA|") + placa;
+        } else if (opcion == 3) {
+            solicitud = "ESTADO|";
+        } else if (opcion == 4) {
+            solicitud = "LISTA|";
+        } else {
+            std::cout << "Opción no válida.\n";
+            continue;
+        }
+
+        std::cout << "Respuesta: " << enviarSolicitud(ip, solicitud) << "\n";
+    }
+    return 0;
+}
